@@ -1,1 +1,2 @@
-# sca-virgen-cabeza-v2.1
+# SCAVirgenDeLaCabeza
+Página web de prácticas
