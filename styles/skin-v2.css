@@ -224,7 +224,7 @@ body { background-color: #F7F3E9; }
 .tienda-hero::after,
 .hero-corto::after,
 .hero-secundario::after {
-  content: "v2";
+  content: "v2.1";
   position: absolute;
   top: 16px;
   right: 16px;
