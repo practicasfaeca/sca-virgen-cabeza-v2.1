@@ -1,26 +1,57 @@
 /* ============================================================
    i18n.js — Cambio de idioma ES ⇄ EN
    ============================================================
-   • Inyecta un botón "EN/ES" en el header.
-   • Mantiene un diccionario ES → EN y traduce nodos de texto +
-     atributos visibles (aria-label, placeholder, alt, title).
-   • Persiste la elección en localStorage ('idioma').
-   • Observa cambios del DOM para re-traducir contenido
-     dinámico (modal de producto, filas del carrito, toasts,
-     mensajes de formulario, etc.).
+   • Inyecta un botón "EN/ES" en el header de escritorio y otro
+     equivalente dentro del panel móvil. Ambos comparten estado.
+   • Mantiene un diccionario ES → EN con coincidencia exacta del
+     texto recortado (no se traducen fragmentos dentro de strings
+     más largos). Esto preserva siempre los nombres propios de
+     producto y marca.
+   • Persiste la elección en localStorage ('idioma') para que se
+     mantenga entre páginas y recargas.
+   • Observa cambios del DOM (sólo childList y attributes; nunca
+     characterData) para re-traducir contenido dinámico generado
+     por el carrito, el catálogo, el modal o el formulario.
+   • Durante la propia traducción, el observador se desconecta para
+     evitar bucles de retraducción sobre nuestras propias escrituras.
+   • Cualquier subárbol marcado con [data-i18n-skip] queda fuera del
+     recorrido. Lo usamos en tarjetas de producto, filas del
+     carrito y modal, donde los textos son nombres propios o
+     contenido ya formateado dinámicamente.
    ============================================================ */
 
 (function () {
   'use strict';
 
+  // ----------------------------------------------------------
+  // Configuración
+  // ----------------------------------------------------------
   const STORAGE_KEY = 'idioma';
   const ATTRS = ['aria-label', 'placeholder', 'title', 'alt'];
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME']);
+  const SKIP_ATTR = 'data-i18n-skip';
+
+  // Clases cuyo subárbol no debe traducirse nunca. Vacío por defecto:
+  // la traducción de los nombres y metadatos de producto se gestiona
+  // íntegramente desde el diccionario por coincidencia exacta, lo
+  // que preserva marcas ("DCOOP", "AOVE", "Olixicar") y traduce las
+  // partes descriptivas ("Caja", "Lata", "Estuche regalo"). Si en
+  // algún momento se necesita blindar un subárbol concreto, basta
+  // con añadirlo a esta lista o ponerle [data-i18n-skip] en el HTML.
+  const SKIP_CLASSES = [];
+
+  function elTieneClaseSkip(el) {
+    if (!el || el.nodeType !== 1 || !el.classList) return false;
+    for (let i = 0; i < SKIP_CLASSES.length; i++) {
+      if (el.classList.contains(SKIP_CLASSES[i])) return true;
+    }
+    return false;
+  }
 
   // ----------------------------------------------------------
-  // DICCIONARIO ES → EN (texto literal, recortado en ambos
-  // extremos para la búsqueda). Si una clave existe, su valor
-  // sustituye al texto al cambiar al inglés.
+  // DICCIONARIO ES → EN
+  // Sólo coincidencia exacta del texto recortado. Cualquier
+  // diferencia ya no es match y el texto se deja como está.
   // ----------------------------------------------------------
   const ES_TO_EN = {
     /* ─── Header / nav ─── */
@@ -83,8 +114,8 @@
     'SCA Virgen de la Cabeza': 'SCA Virgen de la Cabeza',
 
     /* ─── HOME (index.html) ─── */
-    'SCA Virgen de la Cabeza · Aceite de montaña de Montejícar desde 1963 · v2':
-      'SCA Virgen de la Cabeza · Mountain Olive Oil from Montejícar since 1963 · v2',
+    'SCA Virgen de la Cabeza · Aceite de montaña de Montejícar desde 1963 · v2.1':
+      'SCA Virgen de la Cabeza · Mountain Olive Oil from Montejícar since 1963 · v2.1',
     'Presentación': 'Introduction',
     'Desde 1963, aceite de montaña de Montejícar':
       'Since 1963, mountain olive oil from Montejícar',
@@ -156,8 +187,8 @@
       'Exterior of the Virgen de la Cabeza cooperative mill in Montejícar',
 
     /* ─── LA COOPERATIVA ─── */
-    'La cooperativa · SCA Virgen de la Cabeza · v2':
-      'The Cooperative · SCA Virgen de la Cabeza · v2',
+    'La cooperativa · SCA Virgen de la Cabeza · v2.1':
+      'The Cooperative · SCA Virgen de la Cabeza · v2.1',
     'Una cooperativa hecha de campo, personas y tiempo':
       'A cooperative made of countryside, people, and time',
     'Desde 1963 en Montejícar, Granada': 'Since 1963 in Montejícar, Granada',
@@ -211,33 +242,40 @@
     'Visita la cooperativa': 'Visit the cooperative',
 
     /* ─── TIENDA ─── */
-    'Tienda · SCA Virgen de la Cabeza · v2': 'Shop · SCA Virgen de la Cabeza · v2',
+    'Tienda · SCA Virgen de la Cabeza · v2.1': 'Shop · SCA Virgen de la Cabeza · v2.1',
     'Venta directa en origen': 'Direct sale at origin',
     'Compra aceite directamente en origen': 'Buy oil directly at origin',
     'Recibe en casa el aceite de oliva virgen extra de nuestra cooperativa.\n          Venta directa desde Montejícar, en el corazón de los Montes de Granada.':
       'Receive at home the extra virgin olive oil from our cooperative. Direct sale from Montejícar, in the heart of the Montes de Granada.',
     'Nuestras referencias más cuidadas, en formatos y presentaciones especiales.\n              Producción limitada de campaña, también perfectas para regalar.':
       'Our most carefully crafted references, in special formats and presentations. Limited campaign production, also perfect as a gift.',
-    'Selección': 'Selection',
     'Monovarietales con carácter, para realzar platos en crudo.\n              Tostadas, ensaladas, carpaccios, gazpachos.':
       'Single-variety oils with character, to enhance raw dishes. Toasts, salads, carpaccios, gazpachos.',
     'Uso diario': 'Daily use',
     'Aceites equilibrados y versátiles, pensados para la cocina diaria.\n              Ideales para guisos, fritos y aliños cotidianos.':
       'Balanced and versatile oils, designed for daily cooking. Ideal for stews, frying, and everyday dressings.',
     'Añadir al carrito': 'Add to cart',
-    'Único Frutado · Estuche regalo': 'Único Frutado · Gift Box',
-    'Único Coupage Frutado · Caja': 'Único Coupage Frutado · Box',
+
+    /* Nombres y metadatos de tarjetas de producto.
+       Las marcas (DCOOP, AOVE, Olixicar) se preservan; sólo se traducen
+       las partes descriptivas (Estuche, Caja, Lata, Botella…). Los
+       nombres puros (Único Frutado, DCOOP Selección Picual, Olixicar
+       Picual…) se devuelven idénticos para que tampoco caigan en
+       applyExtras. */
+    'Único Frutado · Estuche regalo': 'Único Frutado · Gift box',
+    'Único Coupage Frutado · Caja': 'Único Coupage Frutado · Case',
     'DCOOP Selección Picual': 'DCOOP Selección Picual',
     'Olixicar Picual': 'Olixicar Picual',
     'DCOOP Selección Arbequina': 'DCOOP Selección Arbequina',
     'DCOOP Selección Hojiblanca': 'DCOOP Selección Hojiblanca',
     'DCOOP Especial · Lata': 'DCOOP Especial · Tin',
     'DCOOP Especial Cooperativas': 'DCOOP Especial Cooperativas',
-    'DCOOP Monovarietal Selección · Caja': 'DCOOP Monovarietal Selección · Box',
+    'DCOOP Monovarietal Selección · Caja': 'DCOOP Monovarietal Selección · Case',
     'AOVE Coupage': 'EVOO Coupage',
-    'Olixicar · Caja': 'Olixicar · Box',
-    'Hojiblanca temprana · 500 ml': 'Early Hojiblanca · 500 ml',
-    'Hojiblanca temprana · estuche 500 ml': 'Early Hojiblanca · 500 ml gift box',
+    'Olixicar · Caja': 'Olixicar · Case',
+    'Selección': 'Selection',
+    'Hojiblanca temprana · 500 ml': 'Early-harvest Hojiblanca · 500 ml',
+    'Hojiblanca temprana · estuche 500 ml': 'Early-harvest Hojiblanca · 500 ml gift box',
     'Coupage frutado · caja 6 × 500 ml': 'Fruity coupage · case of 6 × 500 ml',
     'Picual · 500 ml': 'Picual · 500 ml',
     'Arbequina · 250 ml': 'Arbequina · 250 ml',
@@ -246,12 +284,12 @@
     'Coupage · botella': 'Coupage · bottle',
     'Picual · Hojiblanca · Arbequina · caja 3 × 500 ml':
       'Picual · Hojiblanca · Arbequina · case of 3 × 500 ml',
-    'Coupage · 1 l': 'Coupage · 1 L',
-    'Coupage · 5 l': 'Coupage · 5 L',
     'Coupage · 1 L': 'Coupage · 1 L',
     'Coupage · 5 L': 'Coupage · 5 L',
-    'Picual · 5 l': 'Picual · 5 L',
+    'Picual · 5 L': 'Picual · 5 L',
     'Coupage · caja 5 L': 'Coupage · 5 L case',
+
+    /* Etiquetas del modal (perfil sensorial) */
     'Perfil sensorial': 'Sensory profile',
     'Frutado': 'Fruity',
     'Amargor': 'Bitterness',
@@ -267,8 +305,8 @@
     'Ver carrito →': 'See cart →',
 
     /* ─── PRODUCTOS AGRÍCOLAS ─── */
-    'Productos agrícolas · SCA Virgen de la Cabeza · v2':
-      'Agricultural Products · SCA Virgen de la Cabeza · v2',
+    'Productos agrícolas · SCA Virgen de la Cabeza · v2.1':
+      'Agricultural Products · SCA Virgen de la Cabeza · v2.1',
     'Todo lo que necesita el olivar': 'Everything the olive grove needs',
     'Suministramos a nuestros socios y al agricultor de la zona. Disponibles para compra directa en la cooperativa.':
       'We supply our members and local farmers. Available for direct purchase at the cooperative.',
@@ -339,11 +377,11 @@
     'Teléfono': 'Phone',
     'Correo': 'Email',
     'Horario': 'Opening hours',
-    '[HORARIO PENDIENTE]': '[HOURS PENDING]',
+    'Consulta por teléfono': 'Call us to check',
     'Ver mapa y contacto': 'See map and contact',
 
     /* ─── CONTACTO ─── */
-    'Contacto · SCA Virgen de la Cabeza · v2': 'Contact · SCA Virgen de la Cabeza · v2',
+    'Contacto · SCA Virgen de la Cabeza · v2.1': 'Contact · SCA Virgen de la Cabeza · v2.1',
     'Estamos cerca de ti': "We're close to you",
     'Por teléfono, por correo, o de visita en la almazara.':
       'By phone, by email, or by visiting the mill.',
@@ -372,9 +410,10 @@
     'Escribir un email': 'Write an email',
     'Horario de atención': 'Opening hours',
     'Lunes a viernes': 'Monday to Friday',
-    '[HORARIO HABITUAL PENDIENTE]': '[USUAL HOURS PENDING]',
-    'En campaña de aceituna: [HORARIO AMPLIADO PENDIENTE]':
-      'During olive harvest season: [EXTENDED HOURS PENDING]',
+    'Llámanos para confirmar el horario del día.':
+      'Call us to confirm the day’s opening hours.',
+    'En campaña de aceituna ampliamos horario. Llámanos antes de venir.':
+      'During the olive harvest season we extend our opening hours. Please call before visiting.',
     'Pásate a vernos': 'Stop by and see us',
     'Estamos abiertos a quien quiera conocer cómo se hace nuestro aceite. Ven a recoger un pedido, prueba el aceite directamente del lagar o consulta cualquier duda sobre el olivar.':
       'We are open to anyone who wants to learn how our oil is made. Come to pick up an order, taste the oil straight from the press, or ask any questions about the olive grove.',
@@ -387,9 +426,9 @@
     'Razón social': 'Legal name',
     'Domicilio social': 'Registered office',
     'Registro': 'Registration',
-    'DIRECCIÓN COMPLETA PENDIENTE': '[FULL ADDRESS PENDING]',
-    'Nº DE INSCRIPCIÓN PENDIENTE — Registro de Cooperativas Andaluzas':
-      '[REGISTRATION NUMBER PENDING] — Registry of Andalusian Cooperatives',
+    'Camino de la Almazara, s/n · 18561 Montejícar, Granada':
+      'Camino de la Almazara, s/n · 18561 Montejícar, Granada',
+    'Registro de Cooperativas Andaluzas': 'Registry of Andalusian Cooperatives',
     'Aviso legal completo': 'Full legal notice',
     'Política de privacidad': 'Privacy policy',
     'Política de cookies': 'Cookie policy',
@@ -397,8 +436,8 @@
       'Location of the Virgen de la Cabeza cooperative in Montejícar, Granada',
 
     /* ─── CARRITO ─── */
-    'Tu carrito · SCA Virgen de la Cabeza · v2':
-      'Your Cart · SCA Virgen de la Cabeza · v2',
+    'Tu carrito · SCA Virgen de la Cabeza · v2.1':
+      'Your Cart · SCA Virgen de la Cabeza · v2.1',
     'Carrito': 'Cart',
     'Tu carrito': 'Your cart',
     'Revisa tu pedido antes de confirmarlo.': 'Review your order before confirming it.',
@@ -430,8 +469,8 @@
     'Aumentar cantidad': 'Increase quantity',
 
     /* ─── AVISO LEGAL ─── */
-    'Aviso legal y privacidad · SCA Virgen de la Cabeza · v2':
-      'Legal Notice and Privacy Policy · SCA Virgen de la Cabeza · v2',
+    'Aviso legal y privacidad · SCA Virgen de la Cabeza · v2.1':
+      'Legal Notice and Privacy Policy · SCA Virgen de la Cabeza · v2.1',
     'Información legal': 'Legal information',
     'Aviso legal y Política de privacidad':
       'Legal Notice and Privacy Policy',
@@ -453,25 +492,103 @@
     'Ley aplicable y jurisdicción': 'Applicable law and jurisdiction',
     '¿Tienes alguna duda sobre tus datos?': 'Any questions about your data?',
 
+    /* ─── TIENDA: modal de producto — meta (variedad · formato) ─── */
+    'Hojiblanca temprana · Estuche · 500 ml': 'Early-harvest Hojiblanca · Gift box · 500 ml',
+    'Coupage frutado · Caja · 6 botellas 500 ml': 'Fruity coupage · Case · 6 bottles 500 ml',
+    'Coupage · Lata 3 L': 'Coupage · 3 L tin',
+    'Coupage · Botella 750 ml': 'Coupage · 750 ml bottle',
+    'Coupage · Botella 1 L': 'Coupage · 1 L bottle',
+    'Coupage · Garrafa 5 L': 'Coupage · 5 L jerrycan',
+    'Coupage · Caja 5 L': 'Coupage · 5 L case',
+    'Monovarietal · Caja · 3 estuches 500 ml':
+      'Single-variety · Case · 3 gift boxes 500 ml',
+
+    /* ─── TIENDA: modal — descripciones de producto ─── */
+    'Hojiblanca de recolección temprana, seleccionada de los mejores lotes del inicio de campaña. Cuerpo, vigor y un frutado intenso que solo aparece en las primeras semanas de molienda. Edición limitada.':
+      'Early-harvest Hojiblanca, selected from the best lots at the start of the campaign. Body, vigour, and an intense fruity character that only appears in the first weeks of milling. Limited edition.',
+    'La misma hojiblanca temprana de nuestro Único Frutado, presentada en estuche de regalo. Acabado cuidado para una ocasión especial: cumpleaños, agradecimientos, fechas señaladas.':
+      'The same early-harvest Hojiblanca as our Único Frutado, presented in a gift box. A careful finish for a special occasion: birthdays, thank-yous, important dates.',
+    'Caja de seis botellas del Único Coupage Frutado. Coupage de aceitunas tempranas seleccionadas, con un frutado intenso y un equilibrio cuidado. Pensado para hostelería, regalos corporativos o para tener provisión en casa de un AOVE excepcional.':
+      'A case of six bottles of the Único Coupage Frutado. A coupage of selected early olives, with an intense fruity character and a carefully balanced profile. Designed for hospitality, corporate gifts, or keeping a supply of an exceptional EVOO at home.',
+    'Selección de la mejor picual del grupo cooperativo DCOOP. Frutado verde marcado, amargor y picor altos perfectamente integrados. Un aceite para los que disfrutan del carácter.':
+      'A selection of the finest Picual from the DCOOP cooperative group. Marked green fruity notes, with high bitterness and pungency perfectly integrated. An oil for those who enjoy character.',
+    'Versión 500 ml del Olixicar, picual monovarietal vigoroso. Botella manejable para tener cerca de la encimera y darle uso a diario en crudo.':
+      '500 ml version of Olixicar, a vigorous single-variety Picual. A handy bottle to keep near the worktop and use raw on a daily basis.',
+    'Arbequina monovarietal, suave y muy aromática. La opción más amable de la gama: poco amarga, con un final dulce y notas a plátano y almendra fresca.':
+      'Single-variety Arbequina, mild and very aromatic. The friendliest choice in our range: low bitterness, with a sweet finish and notes of banana and fresh almond.',
+    'Hojiblanca monovarietal: más suave que la picual, con notas finas a manzana verde y almendra. Un aceite elegante para platos cuidados.':
+      'Single-variety Hojiblanca: softer than the Picual, with fine notes of green apple and almond. An elegant oil for refined dishes.',
+    'Coupage DCOOP Especial Cooperativas en lata de 3 litros. Formato práctico para cocinas profesionales o consumo intensivo: la lata protege el aceite mejor que el plástico.':
+      'DCOOP Especial Cooperativas coupage in a 3-litre tin. A practical format for professional kitchens or heavy use: the tin protects the oil better than plastic.',
+    'Línea Especial Cooperativas de DCOOP en botella. Un virgen extra estable y de calidad consistente, presentado para uso en mesa.':
+      'DCOOP Especial Cooperativas line in a bottle. A stable extra virgin with consistent quality, ready for the table.',
+    'Una caja con los tres monovarietales de la línea Selección: picual, hojiblanca y arbequina. Pensada para comparar variedades en una misma comida o para regalar a quien quiere descubrir matices.':
+      'A case with the three single-variety oils from the Selección line: Picual, Hojiblanca, and Arbequina. Designed to compare varieties in the same meal, or as a gift for someone who wants to discover nuances.',
+    'Nuestro coupage cooperativa, hecho con las variedades del olivar de Montejícar. Un AOVE equilibrado, sin aristas, pensado para acompañar la cocina diaria sin imponerse.':
+      'Our cooperative coupage, made from the varieties of the Montejícar olive grove. A balanced, unpretentious EVOO designed to accompany daily cooking without taking over.',
+    'Formato familiar de nuestro coupage. Misma calidad equilibrada que el de 1 l en una garrafa pensada para el consumo intensivo en casa o en hostelería.':
+      'Family-size version of our coupage. The same balanced quality as the 1 L bottle, in a jerrycan designed for heavy use at home or in hospitality.',
+    'Picual monovarietal en formato familiar. Carácter robusto del olivar andaluz para quien busca un aceite con personalidad para el día a día.':
+      'Single-variety Picual in family-size format. The robust character of the Andalusian olive grove for anyone looking for an everyday oil with personality.',
+    'Línea Especial Cooperativas de DCOOP en formato 1 L. Un virgen extra estable y de calidad consistente, pensado para la cocina del día a día.':
+      'DCOOP Especial Cooperativas line in a 1 L format. A stable extra virgin with consistent quality, designed for everyday cooking.',
+    'Formato familiar de la línea Especial Cooperativas DCOOP. Garrafa de 5 L para el consumo intensivo en casa o cocinas profesionales, sin renunciar a la calidad consistente del coupage cooperativa.':
+      'Family-size version of the DCOOP Especial Cooperativas line. A 5 L jerrycan for heavy use at home or in professional kitchens, without giving up the consistent quality of the cooperative coupage.',
+    'Olixicar en caja de 5 L, pensado para hostelería y consumo intensivo. Formato estable y manejable que protege el aceite mejor que el plástico.':
+      'Olixicar in a 5 L bag-in-box, designed for hospitality and heavy use. A stable, manageable format that protects the oil better than plastic.',
+
+    /* ─── TIENDA: modal — recomendaciones de uso ─── */
+    'Perfecto en crudo: pan tostado, jamón, solomillo a la plancha.':
+      'Perfect raw: on toast, with cured ham, on grilled sirloin.',
+    'El regalo seguro para alguien al que le importa lo que come.':
+      'A safe-bet gift for someone who cares about what they eat.',
+    'Provisión anual para una mesa exigente. También una opción elegante de regalo de empresa.':
+      'A year-round supply for a demanding table. Also an elegant corporate gift.',
+    'Perfecto para tostadas, ensaladas de tomate, gazpachos y carpaccios.':
+      'Perfect for toast, tomato salads, gazpachos, and carpaccios.',
+    'Perfecto para tostadas, ensaladas y para terminar un buen guiso fuera del fuego.':
+      'Perfect for toast, salads, and to finish a good stew off the heat.',
+    'Repostería, ensaladas suaves, pescados blancos al horno. Buena puerta de entrada al mundo del AOVE.':
+      'Baking, mild salads, baked white fish. A good gateway into the world of EVOO.',
+    'Pescados blancos al horno, carpaccios de verduras o un buen tomate de temporada en aceite.':
+      'Baked white fish, vegetable carpaccios, or a good seasonal tomato dressed in oil.',
+    'Restauración y hostelería: aliños, terminados al plato, pan con aceite en barra.':
+      'Restaurants and hospitality: dressings, plating, bar-style bread with oil.',
+    'Aliños, tostadas y ensaladas del día a día.':
+      'Dressings, toast, and everyday salads.',
+    'Una cata en casa: tostadas, tomate y pan. También un regalo redondo.':
+      'A tasting at home: toast, tomato, and bread. Also a great all-round gift.',
+    'Perfecto para guisos, sofritos, fritos y aliños cotidianos.':
+      'Perfect for stews, sautés, frying, and everyday dressings.',
+    'Perfecto para guisos, sofritos y para dar un toque firme a platos cocinados.':
+      'Perfect for stews, sautés, and to add a firm touch to cooked dishes.',
+    'Guisos, fritos, sofritos y aliños diarios. Un aceite versátil para tener siempre en la encimera.':
+      'Stews, frying, sautés, and daily dressings. A versatile oil to always keep on the worktop.',
+    'Guisos, fritos, sofritos y aliños diarios en grandes cantidades.':
+      'Stews, frying, sautés, and daily dressings in large quantities.',
+    'Cocina profesional y consumo familiar diario.':
+      'Professional cooking and daily family use.',
+
     /* ─── Validación de formulario ─── */
     'Este campo es obligatorio.': 'This field is required.',
     'Introduce un correo válido.': 'Please enter a valid email.',
     'El mensaje debe tener al menos 10 caracteres.':
-      'The message must be at least 10 characters long.'
+      'The message must be at least 10 characters long.',
+    'Selecciona una opción.': 'Please select an option.',
+    'Introduce un teléfono válido.': 'Please enter a valid phone number.',
+    'Revisa este campo.': 'Please check this field.'
   };
 
-  // Inverso EN → ES (para volver atrás)
-  const EN_TO_ES = Object.create(null);
-  Object.keys(ES_TO_EN).forEach((k) => { EN_TO_ES[ES_TO_EN[k]] = k; });
+  // ----------------------------------------------------------
+  // Almacenes para volver al texto original (ES)
+  // Las claves son nodos; los valores el texto/atributo ES original.
+  // WeakMap = no retiene nodos eliminados del DOM.
+  // ----------------------------------------------------------
+  const origText = new WeakMap();      // Text node → string ES original
+  const origAttr = new WeakMap();      // Element  → { attr → string ES original }
 
   // ----------------------------------------------------------
-  // Almacenes para volver al texto original
-  // ----------------------------------------------------------
-  const origText = new WeakMap();       // Text node → string original (ES)
-  const origAttr = new WeakMap();       // Element → { attr → string original }
-
-  // ----------------------------------------------------------
-  // Reformateo de precios
+  // Reformateo de precios y plurales dinámicos
   //   ES: "12,50 €" / "12,50\u00A0€"
   //   EN: "€12.50"
   // ----------------------------------------------------------
@@ -480,76 +597,98 @@
   function priceToEN(s) { return s.replace(PRICE_ES_RE, (_m, a, b) => '€' + a + '.' + b); }
   function priceToES(s) { return s.replace(PRICE_EN_RE, (_m, a, b) => a + ',' + b + '\u00A0€'); }
 
-  // "X artículo(s)" → "X item(s)"
   function articleToEN(s) {
     return s.replace(/(\d+)\s+artículos?/g, (_m, n) => n + ' ' + (n === '1' ? 'item' : 'items'));
   }
-  function articleToES(s) {
-    return s.replace(/(\d+)\s+items?/g, (_m, n) => n + ' ' + (n === '1' ? 'artículo' : 'artículos'));
-  }
 
-  // Sufijos compuestos dinámicos (toast, etc.)
-  const SUFFIXES = [
-    { es: ' añadido al carrito', en: ' added to cart' },
-    { es: ' del carrito', en: ' from the cart' },
-    { es: 'Ver ficha de ', en: 'View details of ' },
-    { es: 'Ver detalle de ', en: 'View details of ' },
-    { es: 'Eliminar ', en: 'Remove ' },
-    { es: ' / unidad', en: ' / unit' }
+  // Sufijos compuestos dinámicos (toasts, aria-labels generados)
+  const SUFFIXES_ES_TO_EN = [
+    [' añadido al carrito', ' added to cart'],
+    [' del carrito', ' from the cart'],
+    ['Ver ficha de ', 'View details of '],
+    ['Ver detalle de ', 'View details of '],
+    ['Eliminar ', 'Remove '],
+    [' / unidad', ' / unit']
   ];
 
-  function applyExtras(s, dir /* 'en'|'es' */) {
+  function applyExtras(s) {
     let out = s;
-    if (dir === 'en') {
-      SUFFIXES.forEach((p) => { out = out.split(p.es).join(p.en); });
-      out = priceToEN(out);
-      out = articleToEN(out);
-    } else {
-      SUFFIXES.forEach((p) => { out = out.split(p.en).join(p.es); });
-      out = priceToES(out);
-      out = articleToES(out);
+    for (let i = 0; i < SUFFIXES_ES_TO_EN.length; i++) {
+      out = out.split(SUFFIXES_ES_TO_EN[i][0]).join(SUFFIXES_ES_TO_EN[i][1]);
     }
+    out = priceToEN(out);
+    out = articleToEN(out);
     return out;
   }
 
   // ----------------------------------------------------------
   // Traducción de un valor (texto plano o atributo)
-  //   `original` es siempre la versión ES.
+  //   `original` es siempre la versión ES (la que ya guardamos).
   // ----------------------------------------------------------
   function translateValue(original, toLang) {
-    if (toLang === 'es') return original;
     if (original == null) return original;
+    if (toLang === 'es') return original;
     const trimmed = original.trim();
     if (!trimmed) return original;
     const mapped = ES_TO_EN[trimmed];
     if (mapped !== undefined) {
-      // preserva espacios envolventes
+      // preservamos los espacios envolventes
       return original.replace(trimmed, mapped);
     }
-    return applyExtras(original, 'en');
+    // No hay clave exacta. Aplicamos sólo transformaciones seguras
+    // (precios, plurales, sufijos compuestos) que no rompen los
+    // nombres propios que pueden venir embebidos.
+    return applyExtras(original);
   }
 
   // ----------------------------------------------------------
-  // Traduce un nodo de texto
+  // Saltarse subárboles marcados con [data-i18n-skip]
+  // o ancestros que ya lo hereden.
+  // ----------------------------------------------------------
+  function isInsideSkipped(el) {
+    let cur = el;
+    while (cur && cur.nodeType === 1) {
+      if (cur.hasAttribute(SKIP_ATTR)) return true;
+      if (elTieneClaseSkip(cur)) return true;
+      cur = cur.parentNode;
+    }
+    return false;
+  }
+
+  // ----------------------------------------------------------
+  // Traduce un único nodo de texto
   // ----------------------------------------------------------
   function translateTextNode(node, toLang) {
     if (!node || node.nodeType !== 3) return;
-    if (node.parentNode && SKIP_TAGS.has(node.parentNode.tagName)) return;
-    if (!origText.has(node)) origText.set(node, node.nodeValue);
+    const parent = node.parentNode;
+    if (!parent) return;
+    if (parent.nodeType === 1 && SKIP_TAGS.has(parent.tagName)) return;
+    if (isInsideSkipped(parent)) return;
+
+    if (!origText.has(node)) {
+      // Primera vez que vemos este nodo: tomamos su valor actual
+      // como referencia ES. Esto funciona porque todo el código
+      // del sitio (renders del carrito, modal, toasts, mensajes
+      // de validación) escribe siempre en español.
+      origText.set(node, node.nodeValue);
+    }
     const orig = origText.get(node);
-    node.nodeValue = translateValue(orig, toLang);
+    const nuevo = translateValue(orig, toLang);
+    if (node.nodeValue !== nuevo) node.nodeValue = nuevo;
   }
 
   // ----------------------------------------------------------
-  // Traduce un atributo
+  // Traduce un atributo de un elemento
   // ----------------------------------------------------------
   function translateAttr(el, attr, toLang) {
     if (!el.hasAttribute(attr)) return;
+    if (isInsideSkipped(el)) return;
     let map = origAttr.get(el);
     if (!map) { map = Object.create(null); origAttr.set(el, map); }
     if (!(attr in map)) map[attr] = el.getAttribute(attr);
     const orig = map[attr];
-    el.setAttribute(attr, translateValue(orig, toLang));
+    const nuevo = translateValue(orig, toLang);
+    if (el.getAttribute(attr) !== nuevo) el.setAttribute(attr, nuevo);
   }
 
   // ----------------------------------------------------------
@@ -560,30 +699,29 @@
     if (node.nodeType === 3) { translateTextNode(node, toLang); return; }
     if (node.nodeType !== 1) return;
     if (SKIP_TAGS.has(node.tagName)) return;
-    // Atributos
+    if (node.hasAttribute && node.hasAttribute(SKIP_ATTR)) return;
+    if (elTieneClaseSkip(node)) return;
+
+    // Atributos primero
     for (let i = 0; i < ATTRS.length; i++) {
       if (node.hasAttribute(ATTRS[i])) translateAttr(node, ATTRS[i], toLang);
     }
-    // Hijos
+    // Después los hijos
     const kids = node.childNodes;
     for (let i = 0; i < kids.length; i++) walk(kids[i], toLang);
   }
 
   // ----------------------------------------------------------
-  // <title> y <html lang>
+  // <title> del documento
   // ----------------------------------------------------------
   function translateTitle(toLang) {
     const t = document.querySelector('title');
-    if (!t) return;
-    if (!origText.has(t.firstChild || t)) {
-      // El title suele tener un solo Text child
-      if (t.firstChild) origText.set(t.firstChild, t.firstChild.nodeValue);
-    }
-    if (t.firstChild) translateTextNode(t.firstChild, toLang);
+    if (!t || !t.firstChild) return;
+    translateTextNode(t.firstChild, toLang);
   }
 
   // ----------------------------------------------------------
-  // Botón en el header
+  // Estilos del botón
   // ----------------------------------------------------------
   function injectStyles() {
     if (document.getElementById('i18n-style')) return;
@@ -622,123 +760,204 @@
       @media (max-width: 640px) {
         .encabezado__idioma { padding: 0 8px; min-width: 40px; }
       }
+      /* Variante dentro del panel móvil: ocupa fila completa */
+      .menu-movil .encabezado__idioma {
+        width: 100%;
+        height: 48px;
+        margin-top: 24px;
+        justify-content: center;
+      }
     `;
     document.head.appendChild(s);
   }
 
-  function injectButton() {
-    if (document.getElementById('toggle-idioma')) return;
-    const acciones = document.querySelector('.encabezado__acciones');
-    if (!acciones) return;
-
-    const btn = document.createElement('button');
-    btn.id = 'toggle-idioma';
-    btn.type = 'button';
-    btn.className = 'encabezado__idioma';
-    btn.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  // SVG común para los botones
+  function botonSvg() {
+    return `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9"/>
         <path d="M3 12h18"/>
         <path d="M12 3a14 14 0 0 1 0 18"/>
         <path d="M12 3a14 14 0 0 0 0 18"/>
-      </svg>
-      <span class="encabezado__idioma-texto">EN</span>
-    `;
+      </svg>`;
+  }
+
+  // Inyecta un botón. Devuelve el botón inyectado (o el ya existente).
+  function injectButton(parent, id, posicion) {
+    if (!parent) return null;
+    let btn = document.getElementById(id);
+    if (btn) return btn;
+
+    btn = document.createElement('button');
+    btn.id = id;
+    btn.type = 'button';
+    btn.className = 'encabezado__idioma';
+    // Atributo de skip: el propio botón no debe pasar por la traducción
+    // por nodos — la actualización de su texto la hacemos a mano en
+    // updateButtons() según el idioma actual.
+    btn.setAttribute(SKIP_ATTR, '');
+    btn.innerHTML = botonSvg() + '<span class="encabezado__idioma-texto">EN</span>';
     btn.addEventListener('click', toggle);
 
-    // Lo insertamos antes del bloque de acceso socios
-    const acceso = acciones.querySelector('.encabezado__acceso');
-    if (acceso) acciones.insertBefore(btn, acceso);
-    else acciones.prepend(btn);
+    if (posicion === 'antes-de-acceso') {
+      const acceso = parent.querySelector('.encabezado__acceso');
+      if (acceso) parent.insertBefore(btn, acceso);
+      else parent.prepend(btn);
+    } else {
+      parent.appendChild(btn);
+    }
+    return btn;
   }
 
-  function updateButton() {
-    const btn = document.getElementById('toggle-idioma');
-    if (!btn) return;
-    const span = btn.querySelector('.encabezado__idioma-texto');
-    if (span) span.textContent = current === 'es' ? 'EN' : 'ES';
-    btn.setAttribute('aria-label',
-      current === 'es' ? 'Switch to English' : 'Cambiar a español');
-    btn.setAttribute('title',
-      current === 'es' ? 'Switch to English' : 'Cambiar a español');
+  function injectAllButtons() {
+    // Botón en la barra de acciones del header
+    const acciones = document.querySelector('.encabezado__acciones');
+    injectButton(acciones, 'toggle-idioma', 'antes-de-acceso');
+
+    // Botón equivalente dentro del panel móvil, debajo de la lista de links
+    const menuMovil = document.getElementById('menu-movil');
+    if (menuMovil) {
+      // Lo metemos al final del <nav> para que quede bajo los links
+      const nav = menuMovil.querySelector('nav') || menuMovil;
+      injectButton(nav, 'toggle-idioma-movil', 'final');
+    }
+  }
+
+  function updateButtons() {
+    const etiquetaTexto = current === 'es' ? 'EN' : 'ES';
+    const etiquetaAccesible = current === 'es' ? 'Switch to English' : 'Cambiar a español';
+    ['toggle-idioma', 'toggle-idioma-movil'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const span = btn.querySelector('.encabezado__idioma-texto');
+      if (span) span.textContent = etiquetaTexto;
+      btn.setAttribute('aria-label', etiquetaAccesible);
+      btn.setAttribute('title', etiquetaAccesible);
+    });
   }
 
   // ----------------------------------------------------------
-  // Estado e inicialización
+  // Estado, aplicación y observador
+  //
+  // Estrategia anti-bucle:
+  // 1) NO observamos characterData. Nuestros únicos cambios de
+  //    valor en text nodes pasan por node.nodeValue = ... que
+  //    dispararía characterData. Al no escuchar ese tipo de
+  //    mutación, nuestras escrituras ya no se ven reflejadas en
+  //    el callback del observador → bucle imposible.
+  //
+  // 2) Cuando code externo asigna textContent o innerHTML, los
+  //    text nodes son reemplazados por nodos nuevos y eso sí
+  //    dispara childList — los recogemos y los traducimos.
+  //
+  // 3) Para nuestras escrituras de atributos (setAttribute),
+  //    desconectamos el observador en apply() y lo reconectamos
+  //    al terminar. Esto evita la condición de carrera con
+  //    actualizaciones de atributos hechas por otros scripts
+  //    (main.js, carrito-pagina.js) durante esa misma microtarea.
   // ----------------------------------------------------------
   let current = 'es';
+  let observer = null;
+
+  const OBSERVER_CONFIG = {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ATTRS
+  };
+
+  function detachObserver() {
+    if (observer) observer.disconnect();
+  }
+  function attachObserver() {
+    if (observer && document.body) observer.observe(document.body, OBSERVER_CONFIG);
+  }
 
   function apply(lang) {
     current = (lang === 'en') ? 'en' : 'es';
     document.documentElement.lang = current;
     try { localStorage.setItem(STORAGE_KEY, current); } catch (_e) {}
-    if (document.body) walk(document.body, current);
-    translateTitle(current);
-    updateButton();
+    // Aislamos nuestras propias mutaciones de atributos.
+    detachObserver();
+    try {
+      if (document.body) walk(document.body, current);
+      translateTitle(current);
+    } finally {
+      attachObserver();
+    }
+    updateButtons();
   }
 
-  function toggle() { apply(current === 'es' ? 'en' : 'es'); }
+  function toggle() {
+    apply(current === 'es' ? 'en' : 'es');
+  }
 
   // ----------------------------------------------------------
   // Observador para contenido dinámico
   // ----------------------------------------------------------
+  function handleMutations(muts) {
+    // Recogemos primero todo y aplicamos en bloque, con el
+    // observador desconectado, para que nuestras escrituras
+    // (atributos, textos) no provoquen nuevas mutaciones.
+    const addedNodes = [];
+    const attrChanges = [];
+
+    for (let i = 0; i < muts.length; i++) {
+      const m = muts[i];
+      if (m.type === 'childList') {
+        m.addedNodes.forEach((n) => addedNodes.push(n));
+      } else if (m.type === 'attributes') {
+        attrChanges.push({ el: m.target, attr: m.attributeName });
+      }
+    }
+
+    if (!addedNodes.length && !attrChanges.length) return;
+
+    detachObserver();
+    try {
+      // Atributos: si vienen de fuera, asumimos que el código
+      // externo siempre escribe en ES → refrescamos la copia
+      // original y aplicamos la traducción actual.
+      for (let i = 0; i < attrChanges.length; i++) {
+        const { el, attr } = attrChanges[i];
+        if (!el || el.nodeType !== 1) continue;
+        if (isInsideSkipped(el)) continue;
+        const valActual = el.getAttribute(attr);
+        if (valActual == null) continue;
+        // Reescribimos el "original ES" sólo si el cambio no
+        // proviene de nosotros (no podemos saberlo con certeza,
+        // pero nuestras propias escrituras coinciden ya con el
+        // valor traducido actual: si current==='en' y el valor
+        // actual es el traducción que pondríamos, ignoramos).
+        const map = origAttr.get(el);
+        const prevOrig = map && (attr in map) ? map[attr] : null;
+        const traduccionEsperada = prevOrig ? translateValue(prevOrig, current) : null;
+        if (traduccionEsperada !== null && traduccionEsperada === valActual) {
+          // Es nuestro propio valor; nada que hacer.
+          continue;
+        }
+        // Tomamos el valor actual como nuevo "original ES".
+        if (!map) origAttr.set(el, Object.create(null));
+        origAttr.get(el)[attr] = valActual;
+        translateAttr(el, attr, current);
+      }
+
+      // Subárboles añadidos: recorremos.
+      for (let i = 0; i < addedNodes.length; i++) {
+        const n = addedNodes[i];
+        if (!n) continue;
+        if (n.nodeType === 1 || n.nodeType === 3) walk(n, current);
+      }
+    } finally {
+      attachObserver();
+    }
+  }
+
   function setupObserver() {
     if (!('MutationObserver' in window)) return;
-    const mo = new MutationObserver((muts) => {
-      for (let i = 0; i < muts.length; i++) {
-        const m = muts[i];
-        if (m.type === 'childList') {
-          m.addedNodes.forEach((n) => walk(n, current));
-        } else if (m.type === 'attributes') {
-          // El atributo cambió desde fuera — actualizamos el "original"
-          // y traducimos de nuevo.
-          const el = m.target;
-          let map = origAttr.get(el);
-          if (!map) { map = Object.create(null); origAttr.set(el, map); }
-          // Si estamos en EN, asumimos que el cambio externo es el nuevo
-          // valor "EN". Para evitar bucles infinitos, sólo guardamos el
-          // valor cuando es la primera vez que vemos el atributo.
-          if (!(m.attributeName in map)) {
-            const val = el.getAttribute(m.attributeName);
-            // Si actualmente estamos en EN, asumimos que es la versión EN
-            // y guardamos la inversa.
-            if (current === 'en' && EN_TO_ES[val && val.trim()]) {
-              map[m.attributeName] = EN_TO_ES[val.trim()];
-            } else {
-              map[m.attributeName] = val;
-            }
-          }
-          if (current !== 'es') translateAttr(el, m.attributeName, current);
-        } else if (m.type === 'characterData') {
-          const node = m.target;
-          // Si el texto cambió por código externo y estamos en EN,
-          // significa que el código escribió en ES — re-traducimos.
-          // Para detectar correctamente, "olvidamos" el original anterior.
-          if (current === 'en') {
-            const newVal = node.nodeValue;
-            // si el valor coincide con una clave EN→ES conocida, no toques
-            const trimmed = (newVal || '').trim();
-            if (trimmed && EN_TO_ES[trimmed]) {
-              // ya está en EN, sólo guarda el original ES
-              if (!origText.has(node)) origText.set(node, EN_TO_ES[trimmed]);
-              return;
-            }
-            origText.set(node, newVal);
-            translateTextNode(node, current);
-          } else {
-            // En ES, almacenamos el último valor como original.
-            origText.set(node, node.nodeValue);
-          }
-        }
-      }
-    });
-    mo.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ATTRS
-    });
+    observer = new MutationObserver(handleMutations);
+    attachObserver();
   }
 
   // ----------------------------------------------------------
@@ -746,7 +965,7 @@
   // ----------------------------------------------------------
   function init() {
     injectStyles();
-    injectButton();
+    injectAllButtons();
     const saved = (function () {
       try { return localStorage.getItem(STORAGE_KEY); } catch (_e) { return null; }
     })();
